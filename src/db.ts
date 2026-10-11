@@ -74,6 +74,14 @@ export async function migrate(db: Database, guildId: string): Promise<void> {
       next_at double precision NOT NULL DEFAULT 0, message_id text, error text,
       UNIQUE(award_id, kind)
     );
+    CREATE TABLE IF NOT EXISTS role_requests (
+      id text PRIMARY KEY, user_id text NOT NULL, role_id text NOT NULL,
+      status text NOT NULL CHECK(status IN ('pending','approved','denied','cancelled')),
+      requested_at double precision NOT NULL, decided_at double precision,
+      decided_by text, staff_message_id text
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS one_pending_role_request
+      ON role_requests(user_id,role_id) WHERE status='pending';
   `;
   for (const statement of schema.split(';').filter(s => s.trim())) await db.query(statement);
   const current = (await db.query('SELECT value FROM settings WHERE key=$1', ['guild_id'])).rows[0];

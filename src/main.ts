@@ -3,13 +3,14 @@ import { mkdir, open, unlink, access, type FileHandle } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import {
-  Client, Events, GatewayIntentBits, PermissionFlagsBits, MessageFlags, EmbedBuilder,
+  Client, Events, GatewayIntentBits, Partials, PermissionFlagsBits, MessageFlags, EmbedBuilder,
   escapeMarkdown, ChannelType, type Guild, type GuildMember, type TextChannel,
   type ChatInputCommandInteraction,
 } from 'discord.js';
 import { openDatabase, migrate, setting, setSetting, audit } from './db.js';
 import { Engine, type Member, type Invite } from './engine.js';
 import { commands } from './commands.js';
+import { RoleRequests } from './role-requests.js';
 
 const GUILD = process.env.GUILD_ID || '1551412456050401300';
 const BOARD = process.env.LEADERBOARD_CHANNEL_ID || '1558519162303811634';
@@ -32,8 +33,14 @@ catch { throw new Error('A worker.lock exists. Check the recorded process has st
 const db = await openDatabase(process.env.DATABASE_URL ? undefined : resolve(DATA, 'postgres'), process.env.DATABASE_URL || undefined);
 await migrate(db, GUILD);
 const engine = new Engine(db, { ageDays, stayDays });
-const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers], allowedMentions: { parse: [] } });
+const client = new Client({
+  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages, GatewayIntentBits.GuildMessageReactions],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction, Partials.User],
+  allowedMentions: { parse: [] },
+});
 let guild: Guild;
+let roleRequests: RoleRequests | undefined;
 let healthy = false;
 let trackingReason = 'Starting';
 let tail = Promise.resolve();
@@ -47,9 +54,12 @@ const safeError = (e: unknown) => {
   const code = (e as { code?: unknown })?.code;
   return typeof code === 'number' || typeof code === 'string' ? `Error code ${code}` : 'Operation failed; check connection, permissions and configuration';
 };
-function queue(fn: () => Promise<void>) {
+function queue(fn: () => Promise<void>, tracking = true) {
   const result = tail.then(async () => { engine.awardsEnabled = healthy; await fn(); });
-  tail = result.catch(e => { healthy = false; trackingReason = safeError(e); console.error(trackingReason); });
+  tail = result.catch(e => {
+    if (tracking) { healthy = false; trackingReason = safeError(e); console.error(trackingReason); }
+    else console.error('Role requests:', e instanceof Error ? e.message : safeError(e));
+  });
   return result;
 }
 const model = (m: GuildMember): Member => ({ id: m.id, name: m.displayName, bot: m.user.bot,
@@ -299,7 +309,14 @@ async function interaction(i: ChatInputCommandInteraction) {
   });
 }
 
-client.on(Events.InteractionCreate, i => { if (i.isChatInputCommand()) void interaction(i).catch(e => console.error('Command:', safeError(e))); });
+client.on(Events.InteractionCreate, i => {
+  if (i.isChatInputCommand()) void interaction(i).catch(e => console.error('Command:', safeError(e)));
+  else if (i.isButton() && i.customId.startsWith('role:'))
+    void roleRequests?.onButton(i).catch(e => console.error('Role button:', safeError(e)));
+});
+client.on(Events.MessageReactionAdd, (reaction, user) => {
+  if (roleRequests) void roleRequests.onReaction(reaction, user).catch(e => console.error('Role reaction:', safeError(e)));
+});
 client.on(Events.GuildMemberAdd, m => {
   if (m.guild.id !== GUILD) return;
   joined.push(model(m));
@@ -329,17 +346,24 @@ client.on(Events.ShardResume, () => { if (guild) void queue(() => sync(true)).ca
 client.on(Events.GuildUnavailable, g => { if (g.id === GUILD) { healthy = false; trackingReason = 'Server temporarily unavailable'; } });
 client.on(Events.Error, e => { healthy = false; trackingReason = safeError(e); console.error(trackingReason); });
 client.once(Events.ClientReady, () => {
-  void queue(async () => {
+  const started = queue(async () => {
     guild = await client.guilds.fetch(GUILD);
+    roleRequests = new RoleRequests(client, guild, db, fn => queue(fn, false));
     await guild.commands.set(commands);
     await sync(true);
     await updateBoard(true);
     console.log(`OneStopShop Community online in server ${GUILD}. Leaderboard: ${BOARD}.`);
-  }).catch(() => {});
+  });
+  void started.then(() => roleRequests?.maintain()).catch(e => console.error('Role requests unavailable:', e instanceof Error ? e.message : safeError(e)));
 });
+let lastRoleCheck = 0;
 const interval = setInterval(() => {
   if (!guild || closing) return;
   void access(resolve(DATA, 'stop.request')).then(() => shutdown().then(() => process.exit(0))).catch(() => {});
+  if (roleRequests && Date.now() - lastRoleCheck > 300_000) {
+    lastRoleCheck = Date.now();
+    void roleRequests.maintain().catch(e => console.error('Role requests unavailable:', e instanceof Error ? e.message : safeError(e)));
+  }
   void queue(async () => {
     if (!joined.length) {
       if (!healthy || Date.now()-lastReconcile > 300_000) await sync(!healthy);

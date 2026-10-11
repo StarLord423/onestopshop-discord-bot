@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, dirname, basename } from 'node:path';
 import { openDatabase, migrate } from '../src/db.js';
 import { Engine, DAY, type Member } from '../src/engine.js';
 
@@ -178,11 +178,20 @@ test('unresolved correction preserves age review and cannot transfer existing ow
 });
 test('file-backed PostgreSQL persists across a close/reopen and rejects wrong guild', async () => {
   const dir=await mkdtemp(join(tmpdir(),'oss-bot-test-'));
-  let db=await openDatabase(dir);
+  let db: Awaited<ReturnType<typeof openDatabase>> | undefined = await openDatabase(dir);
   try {
     await migrate(db,'guild'); await db.query("INSERT INTO settings(key,value) VALUES('receipt','\"persisted\"')");
-    await db.close(); db=await openDatabase(dir); await migrate(db,'guild');
+    await db.close();
+    db=undefined; // Do not hide a reopen failure by closing the old, closed handle.
+    db=await openDatabase(dir); await migrate(db,'guild');
     assert.equal((await db.query("SELECT value FROM settings WHERE key='receipt'")).rows[0]!.value,'persisted');
     await assert.rejects(migrate(db,'different-guild'));
-  } finally { await db.close(); await rm(dir,{recursive:true,force:true}); }
+  } finally {
+    try { await db?.close(); }
+    finally {
+      assert.equal(dirname(resolve(dir)),resolve(tmpdir()));
+      assert.ok(basename(dir).startsWith('oss-bot-test-'));
+      await rm(dir,{recursive:true,force:true});
+    }
+  }
 });
