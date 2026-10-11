@@ -34,6 +34,32 @@ Coordinate the cutover with the current operator first. Do not run this package
 against the live bot token while the old worker is running. Local lock files only
 prevent duplicates on the same machine; two separate machines can both connect.
 
+For the role-request update, the current operator can keep the same database and
+token: stop the worker, back up the stopped data directory, pull the updated
+source, run `npm ci` and `npm run verify`, then start one worker. Before starting,
+verify the OneStopShop Community bot role still has Manage Roles and Add Reactions
+and sits above OSS VIP Premium, OSS VIP, Lurker ++, Lurker, and Beta Tester while
+remaining below staff roles. These Discord settings were applied on October 11.
+The new role-request database table is created by the
+existing startup migration. The bot will then post the reaction menu in
+#🔏get-a-role and use private #role-approval for staff decisions. It will not
+post the menu if permission or hierarchy checks fail.
+
+Role-request integration verification on October 11: TypeScript and all 22 tests
+passed on this deployment PC. The supplied ZIP reported a preexisting PGlite
+cleanup failure elsewhere; the original persistence test passed here before
+integration and after it. Cleanup now avoids closing an already closed handle if
+reopening fails, so it cannot hide that original error. Role-flow tests use a real
+embedded database and mocked Discord calls; ordinary-member approval and denial
+still require live acceptance testing. The imported ZIP was described by its
+sender as commit 2e52f0c; this integration has its own Git history.
+
+The integrated version rejects mismatched staff messages, refreshes staff/role
+permissions before approval, checks the resulting role with a fresh member fetch,
+and ignores partial reactions outside its own menu before fetching them. Run
+`node --import tsx src/inspect-role-setup.ts` for a credential-free, read-only
+permissions and hierarchy report before deployment.
+
 - Existing application:1558554932951650355, server:1551412456050401300.
 - Leaderboard channel:1558519162303811634; message:1558557255878836228.
 - Welcome/invite channel:1551415168712572928.

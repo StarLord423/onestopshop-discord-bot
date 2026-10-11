@@ -19,6 +19,8 @@ open pull requests. Source updates do not automatically deploy the running bot.
 - Existing leaderboard: `1558519162303811634` (#🫆leaderboards).
 - Default invite destination: `1551415168712572928` (#👋welcome).
 - Private staff reward channel: `1558558687461642260` (#invite-rewards).
+- Role menu: `1551415907207741480` (#🔏get-a-role).
+- Private role decision channel: `1558915969466765382` (#role-approval).
 - Default account age: 30 days at first tracked join.
 - Default continuous observed stay: 7 days.
 - Enabled milestones, chosen by the user: 10 qualified invites = 24 free hours of
@@ -80,10 +82,38 @@ visibility must also be granted to those roles by a server administrator.
 
 The bot's installation permissions are Manage Server (invite metadata), Create
 Invite, View Channels, Send Messages, Embed Links, and Read Message History.
-Administrator, Manage Roles, bans, and message-content access are not requested.
+The role-request feature additionally needs Manage Roles and Add Reactions. Move
+the bot's highest role above the five requestable roles, while keeping it below
+staff and admin roles. Never grant Administrator. No message-content access is
+requested. The bot checks its permissions and role hierarchy before posting the
+menu; invite tracking continues if role requests are unavailable.
 This build uses invite snapshots rather than create/delete events; it therefore
 does not require Manage Channels or GuildInvites intent. Read Message History is
 used for its own leaderboard/queue message recovery.
+
+## Role requests
+
+The bot maintains one message in #🔏get-a-role with reactions for OSS VIP
+Premium, OSS VIP, Lurker ++, Lurker, and Beta Tester. These are exact role IDs in
+`src/role-requests.ts`; no other role can be requested. A reaction creates one
+pending request per member and role. Staff decide with Approve or Deny buttons
+in private #role-approval. The bot checks the requested role again when approving
+and records the decision in the database audit log. Removing a reaction does not
+revoke a role. After a denial, the member must remove and re-add the reaction to
+request again. DMs about requests and decisions are best effort.
+The bot binds decisions to its saved staff card, checks staff authorization again
+when processing, and verifies a fresh member-role receipt before recording approval.
+If Discord cannot confirm an addition, inspect the member's roles before retrying;
+an API/network failure may happen after a role was applied.
+
+Beta Tester requests tell staff to check the existing application in
+#📜become-a-beta-tester or the support ticket before approval. The bot does not
+read applications or verify payment for VIP roles; staff make those decisions.
+Only the owner, Manage Server members, and the fixed staff-role allowlist may
+use the decision buttons. The role panel is posted only when the bot can manage
+all five roles and the approval channel remains private to ordinary members.
+Pending requests and the menu message ID survive restarts. The bot retries
+pending staff cards when it starts and during its five-minute maintenance pass.
 
 ## Counting and recovery
 
